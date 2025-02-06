@@ -2,13 +2,18 @@ package utils
 
 import (
 	"fmt"
-	"log"
 	"os/exec"
 	"time"
 )
 
 func GetTimeInMillisec() string {
 	return time.Now().UTC().Format("20060102_150405")
+}
+
+// GetCurrentTimeISO returns the current time in ISO 8601 format.
+func GetCurrentTimeISO() string {
+	currentTime := time.Now()
+	return currentTime.Format(time.RFC3339) // ISO 8601 format
 }
 
 func ConvertToMp3(inputPath, outputPath string) error {
@@ -25,10 +30,9 @@ func ConvertToMp3(inputPath, outputPath string) error {
 	)
 
 	// Capture ffmpeg output for debugging
-	output, err := cmd.CombinedOutput()
+	_, err := cmd.CombinedOutput()
 	if err != nil {
-		log.Printf("FFmpeg error: %s", string(output))
-		return fmt.Errorf("ffmpeg failed: %v", err)
+		return fmt.Errorf("ffmpeg error - %v", err)
 	}
 	return nil
 }
