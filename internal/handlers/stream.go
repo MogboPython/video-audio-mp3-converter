@@ -2,108 +2,143 @@ package handlers
 
 import (
 	"encoding/json"
-	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 
+	"cloud.google.com/go/firestore"
 	"github.com/MogboPython/video-audio-mp3-converter/internal/ports"
 	"github.com/MogboPython/video-audio-mp3-converter/pkg/utils"
 	"github.com/google/uuid"
 )
 
 type StreamHandler struct {
-	storageService ports.StorageService
+	storageService    ports.StorageService
+	firestoreClient   *firestore.Client
 }
 
-func NewStreamHandler(storageService ports.StorageService) *StreamHandler {
+func NewStreamHandler(storageService ports.StorageService, firestoreClient *firestore.Client) *StreamHandler {
 	return &StreamHandler{
-		storageService: storageService,
+		storageService:    storageService,
+		firestoreClient:   firestoreClient,
 	}
 }
 
 type Response struct {
-	URL     string `json:"url"`
+	URL     string `json:"audioUrl"`
+	Path    string `json:"audioPath"`
 	Message string `json:"message"`
+}
+
+type RequestPayload struct {
+	MeetingId string `json:"meetingId"`
+	TempUrl   string `json:"tempUrl"`
+	FileType  string `json:"fileType"`
+	UserId    string `json:"userId"`
 }
 
 func (h *StreamHandler) HandleUpload(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	w.Header().Set("Transfer-Encoding", "chunked")
 	w.Header().Set("Content-Type", "application/json")
 
-	// Get user and meeting IDs from headers
-	userId := r.Header.Get("X-User-ID")
-	meetingId := r.Header.Get("X-Meeting-ID")
-	tempUrl := r.Header.Get("X-Temp-URL")
-
-	// Validate required headers
-	if userId == "" || meetingId == "" {
-		http.Error(w, "Missing required headers: X-User-ID and X-Meeting-ID", http.StatusBadRequest)
+	// Parse request body
+	var payload RequestPayload
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "Invalid request payload", http.StatusBadRequest)
 		return
 	}
 
-	log.Printf("Processing upload for user %s, meeting %s", userId, meetingId)
+	// Validate required fields
+	if payload.MeetingId == "" || payload.TempUrl == "" || payload.FileType == "" || payload.UserId == "" {
+		http.Error(w, "Missing required fields", http.StatusBadRequest)
+		return
+	}
 
-	// Create temporary file
+	// Validate file type
+	if !isValidFileType(payload.FileType) {
+		http.Error(w, "Unsupported file type", http.StatusBadRequest)
+		return
+	}
+
+	// Create temporary files with unique names
 	tempID := uuid.New().String()
-	inputPath := filepath.Join(os.TempDir(), tempID)
-	outputPath := inputPath + ".mp3"
+	tempFilePath := filepath.Join(os.TempDir(), tempID+"."+payload.FileType)
+	outputPath := filepath.Join(os.TempDir(), tempID+".mp3")
 
-	tempFile, err := os.Create(inputPath)
-	if err != nil {
-		log.Printf("Failed to create temp file: %v", err)
-		http.Error(w, "Failed to create temp file", http.StatusInternalServerError)
+	if err := downloadFile(payload.TempUrl, tempFilePath); err != nil {
+		log.Printf("Failed to download file: %v", err)
+		http.Error(w, "Failed to download file", http.StatusInternalServerError)
 		return
 	}
-	defer os.Remove(inputPath)
-	defer tempFile.Close()
+	defer os.Remove(tempFilePath)
+	defer os.Remove(outputPath)
 
-	// Read the stream in chunks
-	buffer := make([]byte, 32*1024) // 32KB chunks
-	for {
-		n, err := r.Body.Read(buffer)
-		if n > 0 {
-			if _, writeErr := tempFile.Write(buffer[:n]); writeErr != nil {
-				log.Printf("Failed to write chunk: %v", writeErr)
-				http.Error(w, "Failed to write chunk", http.StatusInternalServerError)
-				return
-			}
+	// Convert to MP3 if needed
+	if payload.FileType != "mp3" {
+		if err := utils.ConvertToMp3(tempFilePath, outputPath); err != nil {
+			log.Printf("Conversion failed: %v", err)
+			http.Error(w, "Conversion failed", http.StatusInternalServerError)
+			return
 		}
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			log.Printf("Failed to read chunk: %v", err)
-			http.Error(w, "Failed to read chunk", http.StatusBadRequest)
+	} else {
+		if err := copyFile(tempFilePath, outputPath); err != nil {
+			log.Printf("Failed to copy MP3 file: %v", err)
+			http.Error(w, "Failed to process file", http.StatusInternalServerError)
 			return
 		}
 	}
 
-	// Ensure all data is written
-	if err := tempFile.Sync(); err != nil {
-		log.Printf("Failed to sync file: %v", err)
-		http.Error(w, "Failed to sync file", http.StatusInternalServerError)
-		return
-	}
-
-	if err := utils.ConvertToMp3(inputPath, outputPath); err != nil {
-		log.Printf("Conversion failed: %v", err)
-		http.Error(w, "Conversion failed", http.StatusInternalServerError)
-		return
-	}
-	defer os.Remove(outputPath)
-
-	url, err := h.storageService.UploadFile(ctx, outputPath, userId, meetingId, tempUrl, w)
+	// Upload to Firebase
+	url, err := h.storageService.UploadFile(ctx, outputPath, payload.UserId, payload.MeetingId, payload.TempUrl, w)
 	if err != nil {
 		http.Error(w, "Failed to upload file", http.StatusInternalServerError)
 		return
 	}
 
-	json.NewEncoder(w).Encode(Response{
-		URL:     url,
-		Message: "Conversion successful",
-	})
+	// Delete original temp file if it's from Firebase Storage
+	if strings.Contains(payload.TempUrl, "firebasestorage.googleapis.com") {
+		// Extract path from URL
+		path := extractPathFromURL(payload.TempUrl)
+		if err := h.storageService.DeleteFile(ctx, path); err != nil {
+			log.Printf("Failed to delete temp file: %v", err)
+			// Continue execution as this is not critical
+		}
+	}
 
+	// Update meeting document
+	if err := h.updateMeetingDoc(ctx, payload.MeetingId, url); err != nil {
+		log.Printf("Failed to update meeting doc: %v", err)
+		http.Error(w, "Failed to update meeting", http.StatusInternalServerError)
+		return
+	}
+
+	signedURL, err := h.storageService.GenerateSignedURL(url)
+	if err != nil {
+		log.Printf("Failed to generate signed URL: %v", err)
+		http.Error(w, "Failed to generate signed URL", http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(Response{
+		URL:     signedURL,
+		Path:    url,
+		Message: "Processing completed successfully",
+	})
+}
+
+// Helper function to extract path
+func extractPathFromURL(fileURL string) string {
+	// Parse the URL
+	u, _ := url.Parse(fileURL)
+	
+	// Get the 'o' parameter which contains the path
+	path := strings.TrimPrefix(u.Path, "/v0/b/xophieai.firebasestorage.app/o/")
+	
+	// URL decode the path
+	path, _ = url.QueryUnescape(path)
+	
+	return path
 }

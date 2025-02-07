@@ -3,22 +3,25 @@ package router
 import (
 	"net/http"
 
-	"github.com/MogboPython/video-audio-mp3-converter/internal/config"
 	"github.com/MogboPython/video-audio-mp3-converter/internal/handlers"
 	"github.com/gorilla/mux"
 	"github.com/rs/cors"
 )
 
-func SetupRouter(handler *handlers.StreamHandler, cfg *config.Config) http.Handler {
+func SetupRouter(streamHandler *handlers.StreamHandler, allowedOrigin string) http.Handler {
 	r := mux.NewRouter()
 
-	r.HandleFunc("/convert", handler.HandleUpload).Methods("POST")
+	// Add routes
+	r.HandleFunc("/convert", streamHandler.HandleUpload).Methods("POST", "OPTIONS")
+
+	// Setup CORS
 	c := cors.New(cors.Options{
-		AllowedOrigins: []string{cfg.AllowedOrigin},
-		AllowedMethods: []string{"POST", "OPTIONS"},
-		AllowedHeaders: []string{"Content-Type"},
-		MaxAge:         86400,
+		AllowedOrigins:   []string{allowedOrigin},
+		AllowedMethods:   []string{"POST", "GET", "OPTIONS"},
+		AllowedHeaders:   []string{"Content-Type", "Authorization"},
+		AllowCredentials: true,
 	})
 
+	// Return the router with CORS middleware
 	return c.Handler(r)
 }

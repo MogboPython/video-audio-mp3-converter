@@ -4,17 +4,33 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"os"
 
 	firebase "firebase.google.com/go/v4"
+	"cloud.google.com/go/firestore"
 	"github.com/MogboPython/video-audio-mp3-converter/internal/config"
 	"github.com/MogboPython/video-audio-mp3-converter/internal/handlers"
 	"github.com/MogboPython/video-audio-mp3-converter/internal/router"
 	"github.com/MogboPython/video-audio-mp3-converter/internal/services"
+	"google.golang.org/api/option"
 )
 
 func main() {
 	// Load configuration
 	cfg := config.LoadConfig()
+
+	// Initialize Firestore client
+	ctx := context.Background()
+	
+	// Get credentials path
+	credentialsPath := os.Getenv("CREDENTIALS")
+	opt := option.WithCredentialsFile(credentialsPath)
+	
+	firestoreClient, err := firestore.NewClient(ctx, cfg.ProjectID, opt)
+	if err != nil {
+		log.Fatalf("Failed to create Firestore client: %v", err)
+	}
+	defer firestoreClient.Close()
 
 	// Initialize services
 	storageService, err := initializeServices(cfg)
@@ -22,32 +38,38 @@ func main() {
 		log.Fatalf("Failed to initialize services: %v", err)
 	}
 
-	// Initialize handlers
-	streamHandler := handlers.NewStreamHandler(storageService)
+	// Initialize handlers with both services
+	streamHandler := handlers.NewStreamHandler(storageService, firestoreClient)
 
 	// Setup router
-	router := router.SetupRouter(streamHandler, cfg)
+	r := router.SetupRouter(streamHandler, cfg.AllowedOrigin)
 
 	// Start server
-	log.Printf("Starting server on port %s", cfg.Port)
-	log.Fatal(http.ListenAndServe(":"+cfg.Port, router))
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	log.Printf("Starting server on port %s", port)
+	log.Fatal(http.ListenAndServe(":"+port, r))
 }
 
 func initializeServices(cfg *config.Config) (*services.FirebaseStorageService, error) {
 	ctx := context.Background()
 
 	config := &firebase.Config{
+		ProjectID:     cfg.ProjectID,
 		StorageBucket: cfg.StorageBucket,
 	}
 
 	app, err := firebase.NewApp(ctx, config, cfg.Opt)
 	if err != nil {
-		log.Fatalf("Failed to initialize Firebase: %v", err)
+		return nil, err
 	}
 
 	storage, err := app.Storage(ctx)
 	if err != nil {
-		log.Fatalf("Failed to initialize storage: %v", err)
+		return nil, err
 	}
 
 	storageService := services.NewFirebaseStorageService(storage, cfg.StorageBucket)
