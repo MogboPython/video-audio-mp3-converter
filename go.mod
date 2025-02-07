@@ -1,6 +1,6 @@
 module github.com/MogboPython/video-audio-mp3-converter
 
-go 1.21
+go 1.22.7
 
 toolchain go1.23.6
 

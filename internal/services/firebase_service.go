@@ -79,7 +79,6 @@ func (h *FirebaseStorageService) GenerateSignedURL(path string) (string, error) 
 		return "", fmt.Errorf("Failed to get bucket handle")
 	}
 
-	// FIXME: use config
 	opts := &googleStorage.SignedURLOptions{
 		GoogleAccessID: os.Getenv("FIREBASE_CLIENT_EMAIL"),
 		PrivateKey:     []byte(os.Getenv("FIREBASE_PRIVATE_KEY")),
@@ -135,6 +134,6 @@ func extractPathFromURL(fileURL string) (string, error) {
 	// Remove the '/o/' prefix if it exists
 	path = strings.TrimPrefix(path, "/v0/b/")
 	path = strings.TrimPrefix(path, fmt.Sprintf("%s/o/", u.Host))
-	
+
 	return path, nil
 }

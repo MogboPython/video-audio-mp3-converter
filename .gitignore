@@ -61,3 +61,13 @@ credentials.*.json
 
 # Binary
 app
+
+.env
+.vscode/
+videos/
+.golangci.yaml
+credentials.json
+dump.txt
+go.sum
+main.txt
+main_test.go
