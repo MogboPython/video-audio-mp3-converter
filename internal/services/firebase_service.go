@@ -6,7 +6,9 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	googleStorage "cloud.google.com/go/storage"
@@ -96,11 +98,16 @@ func (h *FirebaseStorageService) GenerateSignedURL(path string) (string, error) 
 }
 
 // DeleteFile deletes a file from Firebase Storage
-func (h *FirebaseStorageService) DeleteFile(ctx context.Context, path string) error {
+func (h *FirebaseStorageService) DeleteFile(ctx context.Context, fileURL string) error {
+	// Extract path from Firebase Storage URL
+	path, err := extractPathFromURL(fileURL)
+	if err != nil {
+		return fmt.Errorf("failed to parse URL: %w", err)
+	}
+
 	bucketHandle, err := h.firebaseStorage.Bucket(h.bucket)
 	if err != nil {
-		log.Printf("Failed to get bucket handle: %v", err)
-		return fmt.Errorf("Failed to get bucket handle")
+		return fmt.Errorf("failed to get bucket handle: %w", err)
 	}
 
 	obj := bucketHandle.Object(path)
@@ -109,4 +116,25 @@ func (h *FirebaseStorageService) DeleteFile(ctx context.Context, path string) er
 	}
 
 	return nil
+}
+
+// Helper function to extract path from Firebase Storage URL
+func extractPathFromURL(fileURL string) (string, error) {
+	// Parse the URL
+	u, err := url.Parse(fileURL)
+	if err != nil {
+		return "", err
+	}
+
+	// The path is in the 'o' parameter
+	path, err := url.QueryUnescape(u.Path)
+	if err != nil {
+		return "", err
+	}
+
+	// Remove the '/o/' prefix if it exists
+	path = strings.TrimPrefix(path, "/v0/b/")
+	path = strings.TrimPrefix(path, fmt.Sprintf("%s/o/", u.Host))
+	
+	return path, nil
 }

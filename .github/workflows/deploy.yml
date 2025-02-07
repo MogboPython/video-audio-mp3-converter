@@ -1,0 +1,58 @@
+name: Deploy to Cloud Run
+
+on:
+  push:
+    branches:
+      - main    # deploys to production
+      - dev     # deploys to development
+
+env:
+  REGION: europe-west3
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    # Set environment variables based on branch
+    - name: Set environment variables
+      run: |
+        if [[ ${{ github.ref }} == 'refs/heads/main' ]]; then
+          echo "FIREBASE_PROJECT_ID=xophieai-live" >> $GITHUB_ENV
+          echo "SERVICE_NAME=audio-converter-prod" >> $GITHUB_ENV
+          echo "FIREBASE_STORAGE_BUCKET=xophieai-live.firebasestorage.app" >> $GITHUB_ENV
+          echo "ALLOWED_ORIGIN=https://xophie.ai" >> $GITHUB_ENV
+          echo "GO_ENV=production" >> $GITHUB_ENV
+        else
+          echo "FIREBASE_PROJECT_ID=xophieai" >> $GITHUB_ENV
+          echo "SERVICE_NAME=audio-converter-dev" >> $GITHUB_ENV
+          echo "FIREBASE_STORAGE_BUCKET=xophieai.firebasestorage.app" >> $GITHUB_ENV
+          echo "ALLOWED_ORIGIN=https://xophieai-git-test-xophieai.vercel.app" >> $GITHUB_ENV
+          echo "GO_ENV=development" >> $GITHUB_ENV
+        fi
+
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v1
+      with:
+        project_id: ${{ env.FIREBASE_PROJECT_ID }}
+        service_account_key: ${{ secrets.GCP_SA_KEY }}
+
+    - name: Authenticate Docker
+      run: gcloud auth configure-docker europe-west3-docker.pkg.dev
+
+    - name: Build and Push Container
+      run: |
+        gcloud builds submit --tag europe-west3-docker.pkg.dev/${{ env.FIREBASE_PROJECT_ID }}/docker-repo/audio-converter
+
+    - name: Deploy to Cloud Run
+      run: |
+        gcloud run deploy ${{ env.SERVICE_NAME }} \
+          --image europe-west3-docker.pkg.dev/${{ env.FIREBASE_PROJECT_ID }}/docker-repo/audio-converter \
+          --platform managed \
+          --region ${{ env.REGION }} \
+          --memory 1Gi \
+          --timeout 900 \
+          --allow-unauthenticated \
+          --set-env-vars="GO_ENV=${{ env.GO_ENV }},FIREBASE_STORAGE_BUCKET=${{ env.FIREBASE_STORAGE_BUCKET }},FIREBASE_PROJECT_ID=${{ env.FIREBASE_PROJECT_ID }},ALLOWED_ORIGIN=${{ env.ALLOWED_ORIGIN }}" 
