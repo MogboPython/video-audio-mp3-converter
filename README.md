@@ -1,4 +1,4 @@
-# # Golang Video/Audio to MP3 Converter Service
+# Golang Video/Audio to MP3 Converter Service
 
 This Golang service converts uploaded audio/video files from any format to MP3 and stores them in Firebase Storage. I wrote it to overcome NextJS and Vercel Serverless function’s limitation of FFmpeg conversion. It is designed to handle chunked uploads, process the audio files using `FFmpeg`, and return a publicly accessible Firebase URL for the converted file.
 
@@ -117,8 +117,6 @@ You can deploy this server to any cloud platform that supports Go, such as:
 - **Heroku**
 - **Fly io**
 - **Render**
-
-Ensure all environment variables are set correctly in your deployment environment.
 
 ---
 
