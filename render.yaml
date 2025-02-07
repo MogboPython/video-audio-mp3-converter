@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: xophie-audio-converter
+    env: docker
+    region: frankfurt  # EU region
+    plan: starter  # $7/month
+    healthCheckPath: /health
+    envVars:
+      - key: GO_ENV
+        value: development
+      - key: FIREBASE_STORAGE_BUCKET
+        value: xophieai.firebasestorage.app
+      - key: FIREBASE_PROJECT_ID
+        value: xophieai
+      - key: ALLOWED_ORIGIN
+        value: https://xophieai-git-test-xophieai.vercel.app 
